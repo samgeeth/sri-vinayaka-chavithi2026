@@ -6,6 +6,8 @@ export interface CommitteeMember {
   phone: string;
   image: string;
   village: string;
+  isPublished?: boolean;
+  sortOrder?: number;
 }
 
 export interface WorkUpdate {
@@ -18,6 +20,8 @@ export interface WorkUpdate {
   progress: number;
   photos: string[];
   lead: string;
+  isPublished?: boolean;
+  sortOrder?: number;
 }
 
 export interface LiveUpdatePost {
@@ -35,6 +39,7 @@ export interface LiveUpdatePost {
     heart: number;
     fire: number;
   };
+  isPublished?: boolean;
 }
 
 export interface GalleryItem {
@@ -44,6 +49,8 @@ export interface GalleryItem {
   imageUrl: string;
   description: string;
   year?: string;
+  isPublished?: boolean;
+  sortOrder?: number;
 }
 
 export interface Sponsor {
@@ -53,7 +60,11 @@ export interface Sponsor {
   tier: 'Title Sponsor' | 'Platinum' | 'Gold' | 'Silver' | 'Community Patron';
   contribution: string;
   logo: string;
+  logoImageUrl?: string;
   message?: string;
+  isFeatured?: boolean;
+  isPublished?: boolean;
+  sortOrder?: number;
 }
 
 export interface DonationRecord {
@@ -76,12 +87,68 @@ export interface Volunteer {
   phone: string;
   image: string;
   wing: string;
+  isPublished?: boolean;
+  sortOrder?: number;
 }
 
 export interface ScheduleEvent {
+  id?: string;
   time: string;
   title: string;
   description: string;
   venue: string;
   category: 'Pooja' | 'Annadanam' | 'Cultural' | 'Procession';
+  isPublished?: boolean;
+  sortOrder?: number;
 }
+
+export interface SiteSettings {
+  festivalTitle: string;
+  festivalTheme: string;
+  festivalYear: string;
+  festivalDate: string; // ISO date string e.g. "2026-09-14T08:00:00"
+  festivalEndDate: string; // e.g. "2026-09-24T23:59:59"
+  heroTitle: string;
+  heroSubtitle: string;
+  heroPosterUrl: string;
+  heroVideoUrl: string;
+  logoUrl?: string;
+  livestreamUrl?: string;
+  bannerActive: boolean;
+  bannerText: string;
+  bannerLink: string;
+  aboutHeading: string;
+  aboutDescription: string;
+  aboutHistory: string;
+  aboutPurpose: string;
+  aboutCelebration: string;
+  aboutImportance: string;
+  contactPhone: string;
+  contactEmail: string;
+  contactAddress: string;
+  contactMapsUrl: string;
+  whatsappGroupUrl?: string;
+  instagramUrl?: string;
+  facebookUrl?: string;
+  youtubeUrl?: string;
+  seoMetaTitle: string;
+  seoMetaDescription: string;
+  seoOgImage: string;
+  seoKeywords: string;
+  idolHeight: string;
+  dailyFeastsCount: string;
+  mandapamLocation: string;
+}
+
+export interface AdminUser {
+  id: string;
+  username: string;
+  role: 'superadmin' | 'editor';
+}
+
+export interface AdminSession {
+  token: string;
+  username: string;
+  expiresAt: number;
+}
+

@@ -69,7 +69,7 @@ function committeePhotosPlugin(): Plugin {
     name: 'vite-plugin-committee-photos',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        if (!req.url || !req.url.startsWith('/api/committee/')) {
+        if (!req.url || !req.url.startsWith('/api/')) {
           return next();
         }
 
@@ -79,6 +79,37 @@ function committeePhotosPlugin(): Plugin {
 
         if (!fs.existsSync(photosDir)) {
           fs.mkdirSync(photosDir, { recursive: true });
+        }
+
+        // Handle health check
+        if (parsedUrl === '/api/health') {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ status: 'ok', localDev: true, r2Connected: true }));
+          return;
+        }
+
+        // Handle direct /api/photos/ local dev asset serving
+        if (req.method === 'GET' && parsedUrl.startsWith('/api/photos/')) {
+          const subKey = decodeURIComponent(parsedUrl.replace(/^\/api\/photos\//, ''));
+          const possiblePaths = [
+            path.join(photosDir, path.basename(subKey)),
+            path.resolve(__dirname, 'public', 'committee-photos', path.basename(subKey)),
+            path.resolve(__dirname, 'public', subKey),
+            path.resolve(__dirname, 'public', path.basename(subKey)),
+          ];
+          for (const p of possiblePaths) {
+            if (fs.existsSync(p)) {
+              const ext = path.extname(p).toLowerCase();
+              const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+              res.setHeader('Content-Type', mime);
+              res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+              fs.createReadStream(p).pipe(res);
+              return;
+            }
+          }
+          res.statusCode = 404;
+          res.end(JSON.stringify({ error: 'Image not found' }));
+          return;
         }
 
         const readSavedMap = (): Record<string, string> => {
@@ -107,68 +138,123 @@ function committeePhotosPlugin(): Plugin {
           return;
         }
 
+        if (req.method === 'GET' && parsedUrl === '/api/posts') {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ success: true, posts: [] }));
+          return;
+        }
+
+        if (req.method === 'GET' && parsedUrl === '/api/donations') {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ success: true, donations: [] }));
+          return;
+        }
+
         if (req.method === 'POST') {
-          let body = '';
+          const chunks: Buffer[] = [];
           req.on('data', (chunk) => {
-            body += chunk;
+            chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
           });
 
           req.on('end', () => {
             try {
-              const payload = JSON.parse(body || '{}');
+              const totalBuffer = Buffer.concat(chunks);
+              const contentType = req.headers['content-type'] || '';
 
-              if (parsedUrl === '/api/committee/save-photo') {
-                const { memberId, dataUrl } = payload;
-                if (!memberId || !dataUrl) {
+              // 1. File upload endpoint (/api/upload)
+              if (parsedUrl === '/api/upload') {
+                let fileBuffer: Buffer | null = null;
+                let ext = '.jpg';
+
+                if (contentType.includes('multipart/form-data')) {
+                  const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+                  const boundary = boundaryMatch ? (boundaryMatch[1] || boundaryMatch[2]) : null;
+
+                  if (boundary) {
+                    const boundaryBuffer = Buffer.from(`--${boundary}`);
+                    const headerSep = Buffer.from('\r\n\r\n');
+                    const idx1 = totalBuffer.indexOf(boundaryBuffer);
+                    if (idx1 !== -1) {
+                      const headerIdx = totalBuffer.indexOf(headerSep, idx1);
+                      if (headerIdx !== -1) {
+                        const headerStr = totalBuffer.slice(idx1, headerIdx).toString();
+                        if (headerStr.includes('image/png')) ext = '.png';
+                        else if (headerStr.includes('image/webp')) ext = '.webp';
+
+                        const fileStart = headerIdx + 4;
+                        const nextBoundaryIdx = totalBuffer.indexOf(boundaryBuffer, fileStart);
+                        const fileEnd = nextBoundaryIdx !== -1 ? nextBoundaryIdx - 2 : totalBuffer.length;
+                        fileBuffer = totalBuffer.slice(fileStart, fileEnd);
+                      }
+                    }
+                  }
+                  if (!fileBuffer) {
+                    fileBuffer = totalBuffer;
+                  }
+                } else {
+                  const payload = JSON.parse(totalBuffer.toString('utf8') || '{}');
+                  if (payload.dataUrl) {
+                    const matches = payload.dataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+                    if (matches && matches[2]) {
+                      ext = matches[1].includes('png') ? '.png' : matches[1].includes('webp') ? '.webp' : '.jpg';
+                      fileBuffer = Buffer.from(matches[2], 'base64');
+                    }
+                  }
+                }
+
+                if (!fileBuffer || fileBuffer.length === 0) {
                   res.statusCode = 400;
-                  res.end(JSON.stringify({ success: false, error: 'Missing memberId or dataUrl' }));
+                  res.end(JSON.stringify({ success: false, error: 'Empty file payload' }));
                   return;
                 }
 
-                const matches = dataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-                const ext = matches && matches[1].includes('png') ? '.png' : '.jpg';
-                const fileName = `${memberId}${ext}`;
-                const filePath = path.join(photosDir, fileName);
+                const fileBase = `r2-${Date.now()}-${Math.random().toString(36).substring(2, 7)}${ext}`;
+                const filePath = path.join(photosDir, fileBase);
+                fs.writeFileSync(filePath, fileBuffer);
 
-                if (matches && matches[2]) {
-                  const buffer = Buffer.from(matches[2], 'base64');
-                  fs.writeFileSync(filePath, buffer);
-                }
-
-                const map = readSavedMap();
-                const publicUrl = `/committee-photos/${fileName}`;
-                map[memberId] = publicUrl;
-                writeSavedMap(map);
-
+                const publicUrl = `/api/photos/${fileBase}`;
                 res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify({ success: true, url: publicUrl, map }));
+                res.end(JSON.stringify({
+                  success: true,
+                  key: fileBase,
+                  url: publicUrl,
+                  fullUrl: `http://localhost:3000${publicUrl}`,
+                  size: fileBuffer.length,
+                }));
                 return;
               }
 
-              if (parsedUrl === '/api/committee/sync-all') {
-                const { photos } = payload;
-                if (photos && typeof photos === 'object') {
-                  const map = readSavedMap();
-                  for (const [memberId, dataUrl] of Object.entries(photos)) {
-                    if (typeof dataUrl === 'string' && dataUrl.startsWith('data:')) {
-                      const matches = dataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-                      const ext = matches && matches[1].includes('png') ? '.png' : '.jpg';
-                      const fileName = `${memberId}${ext}`;
-                      const filePath = path.join(photosDir, fileName);
+              // Parse JSON for other POST routes
+              const payload = JSON.parse(totalBuffer.toString('utf8') || '{}');
 
-                      if (matches && matches[2]) {
-                        fs.writeFileSync(filePath, Buffer.from(matches[2], 'base64'));
-                        map[memberId] = `/committee-photos/${fileName}`;
-                      }
-                    } else if (typeof dataUrl === 'string' && dataUrl.startsWith('/committee-photos/')) {
-                      map[memberId] = dataUrl;
-                    }
-                  }
-                  writeSavedMap(map);
-                  res.setHeader('Content-Type', 'application/json');
-                  res.end(JSON.stringify({ success: true, count: Object.keys(photos).length, map }));
+              if (parsedUrl === '/api/committee/save-photo') {
+                const { memberId, imageUrl, dataUrl } = payload;
+                if (!memberId) {
+                  res.statusCode = 400;
+                  res.end(JSON.stringify({ success: false, error: 'Missing memberId' }));
                   return;
                 }
+
+                let finalUrl = imageUrl;
+                if (!finalUrl && dataUrl) {
+                  const matches = dataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+                  const ext = matches && matches[1].includes('png') ? '.png' : '.jpg';
+                  const fileName = `${memberId}${ext}`;
+                  const filePath = path.join(photosDir, fileName);
+
+                  if (matches && matches[2]) {
+                    fs.writeFileSync(filePath, Buffer.from(matches[2], 'base64'));
+                  }
+                  finalUrl = `/api/photos/${fileName}`;
+                }
+
+                const map = readSavedMap();
+                map[memberId] = finalUrl || `/api/photos/${memberId}.jpg`;
+                writeSavedMap(map);
+
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ success: true, url: map[memberId], map }));
+                return;
               }
 
               if (parsedUrl === '/api/committee/remove-photo') {
@@ -187,8 +273,26 @@ function committeePhotosPlugin(): Plugin {
                 return;
               }
 
+              if (parsedUrl === '/api/posts') {
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ success: true, post: payload }));
+                return;
+              }
+
+              if (parsedUrl === '/api/donations') {
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ success: true, donation: payload }));
+                return;
+              }
+
+              if (parsedUrl === '/api/volunteers') {
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ success: true, volunteer: payload }));
+                return;
+              }
+
               res.statusCode = 404;
-              res.end(JSON.stringify({ success: false, error: 'Not found' }));
+              res.end(JSON.stringify({ success: false, error: 'Endpoint not found' }));
             } catch (err: any) {
               res.statusCode = 500;
               res.setHeader('Content-Type', 'application/json');

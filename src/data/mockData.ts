@@ -77,7 +77,7 @@ export const COMMITTEE_MEMBERS: CommitteeMember[] = [
   },
   {
     id: 'c8',
-    name: 'Sandeep',
+    name: 'Pandu',
     role: 'Sound & Illumination Lead',
     category: 'lead',
     phone: '+91 73306 93045',

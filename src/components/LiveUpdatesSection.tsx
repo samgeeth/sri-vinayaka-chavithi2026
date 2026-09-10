@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Radio, PlusCircle, Sparkles, Heart, Flame, MessageSquare, Image as ImageIcon, Send, X, ShieldAlert, Check } from 'lucide-react';
+import { Radio, PlusCircle, Sparkles, Heart, Flame, MessageSquare, Image as ImageIcon, Send, X, ShieldAlert, Check, Upload, Camera, Loader2 } from 'lucide-react';
 import { LiveUpdatePost } from '../types';
 import { playTempleBell } from '../lib/utils';
+import { uploadPublicPhoto, validateImageFile } from '../lib/committeePhotos';
 import { BlurReveal } from './animations/BlurReveal';
 import { MagneticButton } from './animations/MagneticButton';
 import { RippleContainer } from './animations/RippleContainer';
@@ -31,13 +32,46 @@ export const LiveUpdatesSection: React.FC<LiveUpdatesSectionProps> = ({
   const [formContent, setFormContent] = useState('');
   const [formTag, setFormTag] = useState<LiveUpdatePost['tag']>('Announcement');
   const [formMediaUrl, setFormMediaUrl] = useState('');
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [postSuccess, setPostSuccess] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const tags = ['All', 'Important', 'Pooja', 'Cultural', 'Prasadam', 'Work', 'Announcement'];
 
   const filteredPosts = selectedTag === 'All'
     ? posts
     : posts.filter((p) => p.tag === selectedTag);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      setUploadError(validation.error || 'Please select a valid image file (JPEG, PNG, WebP)');
+      return;
+    }
+
+    try {
+      setIsUploadingImage(true);
+      setUploadProgress(0);
+      setUploadError(null);
+      const res = await uploadPublicPhoto(file, 'live-updates', (pct) => {
+        setUploadProgress(pct);
+      });
+      if (res.success && res.url) {
+        setFormMediaUrl(res.url);
+      } else {
+        setUploadError(res.error || 'Failed to upload image. Please try again.');
+      }
+    } catch (err: any) {
+      setUploadError(err?.message || 'Error uploading photo');
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
 
   const handleAdminSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -341,9 +375,78 @@ export const LiveUpdatesSection: React.FC<LiveUpdatesSectionProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">
-                      Attach Image (Choose preset or paste URL)
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-semibold text-gray-300">
+                        Attach Image
+                      </label>
+                      <span className="text-[10px] text-emerald-400 font-mono">
+                        Cloud R2 Persistent
+                      </span>
+                    </div>
+
+                    {/* Direct File Upload to Cloud Storage */}
+                    <div className="mb-2">
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        accept="image/jpeg,image/png,image/webp,image/jpg"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isUploadingImage}
+                        className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-[#1b1b1b] to-[#141414] hover:from-[#242424] hover:to-[#1a1a1a] border border-[#FFD700]/30 hover:border-[#FFD700]/60 text-xs font-semibold text-[#FFD700] flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {isUploadingImage ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span>Uploading to Cloudflare R2 ({uploadProgress}%)...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>Upload Photo from Device (Cloudflare R2)</span>
+                          </>
+                        )}
+                      </button>
+
+                      {/* Animated Progress Bar */}
+                      {isUploadingImage && (
+                        <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden mt-1.5">
+                          <div
+                            className="bg-gradient-to-r from-[#FFD700] to-[#FF8C00] h-full transition-all duration-200"
+                            style={{ width: `${uploadProgress}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {uploadError && (
+                      <p className="text-[11px] text-rose-400 mb-2">{uploadError}</p>
+                    )}
+
+                    {/* Image Preview if selected */}
+                    {formMediaUrl && (
+                      <div className="relative mb-2 rounded-xl overflow-hidden border border-white/15 max-h-32 group">
+                        <img
+                          src={formMediaUrl}
+                          alt="Preview"
+                          className="w-full h-32 object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setFormMediaUrl('')}
+                          className="absolute top-2 right-2 p-1 rounded-full bg-black/70 hover:bg-black text-white text-xs"
+                          title="Remove image"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="text-[10px] text-gray-400 mb-1.5">Or choose a preset darshan photo:</div>
                     <div className="grid grid-cols-2 gap-2 mb-2">
                       {presetPhotos.map((preset, pIdx) => (
                         <button
@@ -363,7 +466,7 @@ export const LiveUpdatesSection: React.FC<LiveUpdatesSectionProps> = ({
                     </div>
                     <input
                       type="url"
-                      placeholder="https://..."
+                      placeholder="Or paste image URL (https://...)"
                       value={formMediaUrl}
                       onChange={(e) => setFormMediaUrl(e.target.value)}
                       className="w-full px-3 py-2 rounded-xl bg-[#181818] border border-white/10 text-white text-xs placeholder-gray-500 focus:outline-none focus:border-[#FFD700]"

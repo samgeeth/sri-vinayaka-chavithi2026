@@ -27,9 +27,9 @@ import { MagneticButton } from './animations/MagneticButton';
 import {
   getAllCustomPhotos,
   saveCustomPhoto,
-  fileToOptimizedDataUrl,
   fetchAndMergeServerPhotos,
   syncAllToProjectDisk,
+  validateImageFile,
 } from '../lib/committeePhotos';
 import { CommitteePhotoUploaderModal } from './CommitteePhotoUploaderModal';
 
@@ -46,12 +46,11 @@ export const CommitteeSection: React.FC<CommitteeSectionProps> = ({ onOpenFullPa
   const [targetMemberId, setTargetMemberId] = useState<string | null>(null);
   const [uploadSuccessToast, setUploadSuccessToast] = useState<string | null>(null);
 
-  // Sync custom photos from storage and project files
+  // Sync custom photos from Cloudflare R2 API
   useEffect(() => {
     setCustomPhotos(getAllCustomPhotos());
     fetchAndMergeServerPhotos().then((photos) => {
       setCustomPhotos(photos);
-      syncAllToProjectDisk();
     });
 
     const handlePhotoUpdated = () => {
@@ -63,13 +62,27 @@ export const CommitteeSection: React.FC<CommitteeSectionProps> = ({ onOpenFullPa
   }, []);
 
   const handleCardPhotoUpload = async (memberId: string, memberName: string, file: File) => {
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      setUploadSuccessToast(validation.error || 'Invalid image file');
+      setTimeout(() => setUploadSuccessToast(null), 4000);
+      return;
+    }
+
     try {
-      const dataUrl = await fileToOptimizedDataUrl(file, 800, 1000, 0.88);
-      saveCustomPhoto(memberId, dataUrl);
-      setUploadSuccessToast(`Updated photo for ${memberName}!`);
-      setTimeout(() => setUploadSuccessToast(null), 3000);
-    } catch (err) {
+      setUploadSuccessToast(`Uploading ${memberName}'s photo to Cloudflare R2...`);
+      const res = await saveCustomPhoto(memberId, file);
+      if (res.success && res.url) {
+        setCustomPhotos((prev) => ({ ...prev, [memberId]: res.url! }));
+        setUploadSuccessToast(`Photo for ${memberName} permanently saved to Cloudflare R2!`);
+      } else {
+        setUploadSuccessToast(res.error || `Failed to upload photo for ${memberName}`);
+      }
+      setTimeout(() => setUploadSuccessToast(null), 4000);
+    } catch (err: any) {
       console.error(err);
+      setUploadSuccessToast(`Upload error: ${err?.message || 'Failed to save photo'}`);
+      setTimeout(() => setUploadSuccessToast(null), 4000);
     }
   };
 

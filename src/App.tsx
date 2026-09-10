@@ -19,6 +19,7 @@ import { PetalsOverlay } from './components/PetalsOverlay';
 import { MouseFollowGlow } from './components/animations/MouseFollowGlow';
 import { INITIAL_DONATIONS, INITIAL_LIVE_UPDATES } from './data/mockData';
 import { DonationRecord, LiveUpdatePost } from './types';
+import { fetchAndMergeServerPhotos } from './lib/committeePhotos';
 
 export default function App() {
   // Page Navigation State ('home' = Festival Home, 'committee' = Second Page)
@@ -94,6 +95,32 @@ export default function App() {
     return INITIAL_LIVE_UPDATES;
   });
 
+  // Fetch initial data from Cloudflare API so all devices see the latest updates & R2 photos
+  useEffect(() => {
+    // 1. Fetch live posts
+    fetch('/api/posts')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.posts && Array.isArray(data.posts) && data.posts.length > 0) {
+          setLivePosts(data.posts);
+        }
+      })
+      .catch(() => {});
+
+    // 2. Fetch donations
+    fetch('/api/donations')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.donations && Array.isArray(data.donations) && data.donations.length > 0) {
+          setDonations(data.donations);
+        }
+      })
+      .catch(() => {});
+
+    // 3. Fetch committee photos from R2
+    fetchAndMergeServerPhotos().catch(() => {});
+  }, []);
+
   // Modals state
   const [isDonationModalOpen, setIsDonationModalOpen] = useState(false);
   const [selectedReceipt, setSelectedReceipt] = useState<DonationRecord | null>(null);
@@ -121,30 +148,54 @@ export default function App() {
   const handleDonationSuccess = (newRecord: DonationRecord) => {
     setDonations((prev) => [newRecord, ...prev]);
     setSelectedReceipt(newRecord);
+
+    // Persist to Cloudflare Database
+    fetch('/api/donations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newRecord),
+    }).catch(() => {});
   };
 
   // Handle new live post
   const handleAddLivePost = (newPost: LiveUpdatePost) => {
     setLivePosts((prev) => [newPost, ...prev]);
+
+    // Persist to Cloudflare Database & R2 media manifest
+    fetch('/api/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newPost),
+    }).catch(() => {});
   };
 
   // Handle reactions
   const handleReact = (postId: string, reactionType: string) => {
-    setLivePosts((prev) =>
-      prev.map((post) => {
+    setLivePosts((prev) => {
+      const updated = prev.map((post) => {
         if (post.id === postId) {
           const currentCount = post.reactions[reactionType] || 0;
-          return {
+          const updatedPost = {
             ...post,
             reactions: {
               ...post.reactions,
               [reactionType]: currentCount + 1,
             },
           };
+
+          // Sync reaction to Cloudflare API
+          fetch('/api/posts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updatedPost),
+          }).catch(() => {});
+
+          return updatedPost;
         }
         return post;
-      })
-    );
+      });
+      return updated;
+    });
   };
 
   // Handle lightbox image selection

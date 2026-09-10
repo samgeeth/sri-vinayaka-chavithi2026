@@ -31,9 +31,9 @@ import { playTempleBell } from '../lib/utils';
 import {
   getAllCustomPhotos,
   saveCustomPhoto,
-  fileToOptimizedDataUrl,
   fetchAndMergeServerPhotos,
   syncAllToProjectDisk,
+  validateImageFile,
 } from '../lib/committeePhotos';
 import { CommitteePhotoUploaderModal } from '../components/CommitteePhotoUploaderModal';
 
@@ -59,13 +59,13 @@ export const CommitteePage: React.FC<CommitteePageProps> = ({ onBackToHome }) =>
   const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
   const [targetMemberId, setTargetMemberId] = useState<string | null>(null);
   const [uploadToast, setUploadToast] = useState<string | null>(null);
+  const [uploadingMemberId, setUploadingMemberId] = useState<string | null>(null);
 
-  // Sync custom committee photos from storage and project disk
+  // Sync custom committee photos from Cloudflare R2 API
   useEffect(() => {
     setCustomPhotos(getAllCustomPhotos());
     fetchAndMergeServerPhotos().then((photos) => {
       setCustomPhotos(photos);
-      syncAllToProjectDisk();
     });
 
     const handleUpdated = () => setCustomPhotos(getAllCustomPhotos());
@@ -74,13 +74,32 @@ export const CommitteePage: React.FC<CommitteePageProps> = ({ onBackToHome }) =>
   }, []);
 
   const handleCardUpload = async (memberId: string, memberName: string, file: File) => {
+    // 1. Validate image format & size
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      setUploadToast(validation.error || 'Invalid image file');
+      setTimeout(() => setUploadToast(null), 4000);
+      return;
+    }
+
     try {
-      const dataUrl = await fileToOptimizedDataUrl(file, 800, 1000, 0.88);
-      saveCustomPhoto(memberId, dataUrl);
-      setUploadToast(`Photo updated for ${memberName}!`);
-      setTimeout(() => setUploadToast(null), 3000);
-    } catch (err) {
+      setUploadingMemberId(memberId);
+      setUploadToast(`Uploading ${memberName}'s photo to Cloudflare R2...`);
+
+      const res = await saveCustomPhoto(memberId, file);
+      if (res.success && res.url) {
+        setCustomPhotos((prev) => ({ ...prev, [memberId]: res.url! }));
+        setUploadToast(`Photo for ${memberName} permanently saved to Cloudflare R2!`);
+      } else {
+        setUploadToast(res.error || `Failed to upload photo for ${memberName}`);
+      }
+      setTimeout(() => setUploadToast(null), 4000);
+    } catch (err: any) {
       console.error(err);
+      setUploadToast(`Upload error: ${err?.message || 'Failed to upload photo'}`);
+      setTimeout(() => setUploadToast(null), 4000);
+    } finally {
+      setUploadingMemberId(null);
     }
   };
 
@@ -147,6 +166,11 @@ export const CommitteePage: React.FC<CommitteePageProps> = ({ onBackToHome }) =>
     setRegisteredVolunteers(updated);
     try {
       localStorage.setItem('mvy_registered_volunteers_2026', JSON.stringify(updated));
+      fetch('/api/volunteers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newEntry),
+      }).catch(() => {});
     } catch (err) {
       console.error(err);
     }
