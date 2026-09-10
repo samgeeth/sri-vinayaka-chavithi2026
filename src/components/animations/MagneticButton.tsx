@@ -6,7 +6,7 @@ interface MagneticButtonProps {
   className?: string;
   onClick?: (e: React.MouseEvent) => void;
   strength?: number;
-  as?: 'button' | 'a';
+  as?: 'div' | 'button' | 'a';
   href?: string;
   id?: string;
 }
@@ -16,7 +16,7 @@ export const MagneticButton: React.FC<MagneticButtonProps> = ({
   className = '',
   onClick,
   strength = 0.25,
-  as = 'button',
+  as = 'div',
   href,
   id,
 }) => {
@@ -49,7 +49,7 @@ export const MagneticButton: React.FC<MagneticButtonProps> = ({
     y.set(0);
   };
 
-  const Component = as === 'a' ? motion.a : motion.button;
+  const Component = as === 'a' ? motion.a : as === 'button' ? motion.button : motion.div;
 
   return (
     <motion.div
